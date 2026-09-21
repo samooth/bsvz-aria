@@ -94,4 +94,4 @@ For security vulnerabilities, see [SECURITY.md](../SECURITY.md).
 
 ## License
 
-Refer to the license defined by the main repository and by each Zig dependency.
+This project is licensed under the **OPEN BSV License**.

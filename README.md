@@ -188,7 +188,7 @@ const valid = try aria.verifyRecord(
 
 ### License
 
-Refer to the license defined by the main repository and by each Zig dependency.
+This project is licensed under the **OPEN BSV License**.
 
 ---
 
@@ -373,4 +373,4 @@ const valid = try aria.verifyRecord(
 
 ### Licencia
 
-Consultar la licencia definida por el repositorio principal y por cada dependencia de Zig.
+Este proyecto está licenciado bajo la **Licencia OPEN BSV**.

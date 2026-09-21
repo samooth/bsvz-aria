@@ -85,4 +85,4 @@ Para vulnerabilidades de seguridad, ver [SECURITY.md](../SECURITY.md).
 
 ## Licencia
 
-Consultar la licencia definida por el repositorio principal y por cada dependencia de Zig.
+Este proyecto está licenciado bajo la **Licencia OPEN BSV**.
