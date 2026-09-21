@@ -1,0 +1,24 @@
+.{
+    .name = .zig_wallet_toolbox,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xf125ec13a2d567c9,
+    .dependencies = .{
+        .bsvz = .{
+            .url = "git+https://github.com/samooth/bsvz#1712e38e0eb1a215f215ca59364340b28c854e05",
+            .hash = "bsvz-0.1.0-wvsL-dviFQDU2Al1QQBlT1s8lDJPmNDXLWdg1-1Q4fBw",
+        },
+        .sqlite = .{
+            .url = "git+https://github.com/samooth/zig-sqlite#2124d42d817c47da5f033b61a9fa6c7643f598c4",
+            .hash = "sqlite-3.53.4-F2R_a_9DDwBktiEd3EBGtbAqXJ8SwBLUJPhdydz0XcUG",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tests",
+        "README.md",
+        "LICENSE",
+    },
+}
