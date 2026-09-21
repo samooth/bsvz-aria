@@ -1,77 +1,87 @@
 # bsvz-aria
 
+`bsvz-aria` is a Zig 0.16+ implementation of the BRC-122 standard, **Auditable Real-time Inference Architecture**, for the BSV ecosystem.
+
 `bsvz-aria` es una implementación en Zig 0.16+ del estándar BRC-122, **Auditable Real-time Inference Architecture**, para el ecosistema BSV.
 
+ARIA allows auditable recording of the AI inference lifecycle through two on-chain commitments:
 ARIA permite registrar de forma auditable el ciclo de vida de inferencias de IA mediante dos compromisos on-chain:
 
-1. `EPOCH_OPEN` compromete los modelos y el estado antes de ejecutar inferencias.
-2. `EPOCH_CLOSE` sella el lote de registros mediante una raíz Merkle y lo enlaza con el `EPOCH_OPEN`.
+1. `EPOCH_OPEN` commits the models and state before running inferences.
+2. `EPOCH_CLOSE` seals the batch of records through a Merkle root and links it to `EPOCH_OPEN`.
 
+Individual `AuditRecord`s are stored locally and are not published one by one on-chain.
 Los `AuditRecord` individuales se almacenan localmente y no se publican uno por uno en la cadena.
 
-## Qué garantiza ARIA
+## What ARIA guarantees / Qué garantiza ARIA
 
+ARIA proves:
 ARIA prueba:
 
-- **Compromiso temporal:** los `model_hashes` y el `state_hash` se publican antes de realizar las inferencias.
-- **Consistencia del lote:** todos los registros de un epoch están comprometidos por el `records_merkle_root` publicado en `EPOCH_CLOSE`.
-- **Vinculación de epochs:** `EPOCH_CLOSE.prev_txid` enlaza criptográficamente el cierre con su apertura.
-- **Detección de alteraciones:** un cambio en un registro, en el identificador del epoch o en el enlace al opening invalida la verificación.
+- **Temporal commitment:** `model_hashes` and `state_hash` are published before inferences are run.
+- **Batch consistency:** all records in an epoch are committed by the `records_merkle_root` published in `EPOCH_CLOSE`.
+- **Epoch linking:** `EPOCH_CLOSE.prev_txid` cryptographically links the close to its opening.
+- **Tamper detection:** a change to a record, epoch identifier, or opening link invalidates verification.
+
+ARIA **alone does not prove computational integrity**. It does not prove that the committed model was executed or that the result is computationally correct. That guarantee is provided by the optional integration with [`zig-zkml`](https://github.com/samooth/zig-zkml).
 
 ARIA **no prueba por sí sola la integridad computacional**. No demuestra que se haya ejecutado el modelo comprometido ni que el resultado sea computacionalmente correcto. Esa garantía corresponde a la integración opcional con [`zig-zkml`](https://github.com/samooth/zig-zkml).
 
-La referencia canónica del protocolo es [`JuanmPalencia/aria-bsv`](https://github.com/JuanmPalencia/aria-bsv).
+The canonical protocol reference is [`JuanmPalencia/aria-bsv`](https://github.com/JuanmPalencia/aria-bsv).
 
-## Flujo de uso
+## Usage flow / Flujo de uso
 
 ```text
 EPOCH_OPEN (OP_RETURN)
         |
-        |  inferencias durante el epoch
-        v
-AuditRecord x N (almacenamiento local)
+        |  inferences during the epoch
+        ▼
+AuditRecord x N (local storage)
         |
-        v
+        ▼
 EPOCH_CLOSE (OP_RETURN)
 ```
 
+The transaction payload uses the format:
 El payload de las transacciones usa el formato:
 
 ```text
 OP_FALSE OP_RETURN PUSH4(0x41524941) PUSHDATA(varint_len, json_bytes)
 ```
 
+Where `0x41524941` is the ASCII string `ARIA`. JSON is serialized without whitespace outside strings and with deterministic key ordering.
 Donde `0x41524941` es la cadena ASCII `ARIA`. El JSON se serializa sin whitespace fuera de los strings y con un orden de claves determinístico.
 
-## Instalación y build
+## Installation and build / Instalación y build
 
+Zig 0.16+ is required and the dependencies configured in `build.zig.zon`:
 Se requiere Zig 0.16 o superior y las dependencias configuradas en `build.zig.zon`:
 
 - `bsvz`
 - `zig-wallet-toolbox`
-- `zig-zkml` (opcional)
+- `zig-zkml` (optional / opcional)
 
-Ejecutar los tests:
+Run tests / Ejecutar los tests:
 
 ```bash
 zig build test
 ```
 
-Ejecutar el ejemplo básico:
+Run the basic example / Ejecutar el ejemplo básico:
 
 ```bash
 zig build run --example basic_epoch
 ```
 
-Habilitar la integración con zkML:
+Enable zkML integration / Habilitar la integración con zkML:
 
 ```bash
 zig build test -Dwith_zkml=true
 ```
 
-Sin `-Dwith_zkml=true`, `zkml_bridge` expone la interfaz correspondiente pero devuelve `error.ZkmlNotAvailable`.
+Without `-Dwith_zkml=true`, `zkml_bridge` exposes the corresponding interface but returns `error.ZkmlNotAvailable`.
 
-## Ejemplo mínimo
+## Minimal example / Ejemplo mínimo
 
 ```zig
 const std = @import("std");
@@ -117,11 +127,9 @@ pub fn main() !void {
 }
 ```
 
-La API y el comportamiento exacto de cada módulo están definidos en `DETAIL.md`.
+## zkML Integration / Integración con zkML
 
-## Integración con zkML
-
-`zig-zkml` permite obtener la raíz de los pesos del modelo y adjuntar pruebas computacionales a los registros:
+`zig-zkml` allows obtaining the model's weights root and attaching computational proofs to records:
 
 ```zig
 const weights_root = try aria.zkml_bridge.weightsMerkleRoot(model);
@@ -150,11 +158,14 @@ try epoch.addRecord(.{
 });
 ```
 
+`zig-zkml` permite obtener la raíz de los pesos del modelo y adjuntar pruebas computacionales a los registros.
+
+ARIA and zkML are complementary layers: ARIA seals when and under what commitment the batch was performed; zkML proves computational execution.
 ARIA y zkML son capas complementarias: ARIA sella cuándo y bajo qué compromiso se realizó el lote; zkML demuestra la ejecución computacional.
 
-## Verificación
+## Verification / Verificación
 
-`verifyEpoch` obtiene y parsea las transacciones `EPOCH_OPEN` y `EPOCH_CLOSE`, comprueba sus enlaces y, opcionalmente, verifica el cierre mediante SPV:
+`verifyEpoch` fetches and parses the `EPOCH_OPEN` and `EPOCH_CLOSE` transactions, checks their links, and optionally verifies the close via SPV:
 
 ```zig
 const verified = try aria.verifyEpoch(allocator, epoch_open_txid, .{
@@ -163,7 +174,7 @@ const verified = try aria.verifyEpoch(allocator, epoch_open_txid, .{
 });
 ```
 
-`verifyRecord` valida el identificador del epoch, el modelo comprometido y la pertenencia del registro al Merkle root:
+`verifyRecord` validates the epoch identifier, the committed model, and the record's membership in the Merkle root:
 
 ```zig
 const valid = try aria.verifyRecord(
@@ -174,72 +185,108 @@ const valid = try aria.verifyRecord(
 );
 ```
 
+If no Merkle proof is provided, the verifier can rebuild the tree from locally stored records.
 Si no se proporciona una prueba Merkle, el verificador puede reconstruir el árbol a partir de los registros almacenados localmente.
 
 ## Merkle RFC 6962
 
+The tree uses domain separation:
 El árbol utiliza separación de dominio:
 
-- hoja: `SHA-256(0x00 || data)`
-- nodo interno: `SHA-256(0x01 || left || right)`
+- leaf: `SHA-256(0x00 || data)`
+- internal node: `SHA-256(0x01 || left || right)`
 
+Trees with any number of leaves are supported, including odd sizes. The root of an empty tree is `SHA-256("")`.
 Se admiten árboles con cualquier cantidad de hojas, incluidos los tamaños impares. El root de un árbol vacío es `SHA-256("")`.
 
-## JSON canónico
+## Canonical JSON
 
+Serialization uses a custom serializer to guarantee:
 La serialización usa un serializer propio para garantizar:
 
-- orden determinístico de claves;
-- ausencia de whitespace fuera de strings;
-- números sin ceros finales innecesarios;
-- escaping compatible con RFC 8259.
+- deterministic key ordering;
+- no whitespace outside strings;
+- no unnecessary trailing zeros;
+- RFC 8259 compatible escaping.
 
+This avoids byte-a-byte variations across builds or implementations.
 Esto evita variaciones byte-a-byte entre compilaciones o implementaciones.
 
 ## RecordStore
 
+Records are stored through a pluggable `RecordStore` interface:
 Los registros se almacenan mediante una interfaz `RecordStore` intercambiable:
 
-- `MemoryStore`: implementación en memoria para tests.
-- `SqliteStore`: almacenamiento persistente para producción.
-- `FileStore`: JSON Lines para integraciones simples.
+- `MemoryStore`: in-memory implementation for tests.
+- `SqliteStore`: persistent storage for production.
+- `FileStore`: JSON Lines for simple integrations.
 
+The interface allows adding, listing, and recovering records by epoch or by `record_id`. The Merkle root published on-chain does not allow rebuilding lost records; preserving local storage is the operator's responsibility.
 La interfaz permite agregar, listar y recuperar registros por epoch o por `record_id`. El root Merkle publicado on-chain no permite reconstruir los registros perdidos; conservar el almacenamiento local es responsabilidad del operador.
 
-## Configuración runtime
+## Runtime configuration / Configuración runtime
 
+The default configuration includes:
 La configuración por defecto incluye:
 
-| Parámetro | Valor por defecto |
+| Parameter | Default value |
 | --- | ---: |
-| Duración de epoch | `60_000 ms` |
-| Máximo de registros por epoch | `1_000_000` |
-| Tamaño de lote Merkle | `1000` |
+| Epoch duration | `60_000 ms` |
+| Max records per epoch | `1_000_000` |
+| Merkle batch size | `1000` |
 | Fee | `500 sats/kB` |
-| Almacenamiento | `sqlite` |
+| Storage | `sqlite` |
 
+Values must be validated before starting an epoch. In particular, duration and max records cannot be zero.
 Los valores deben validarse antes de iniciar un epoch. En particular, la duración y el máximo de registros no pueden ser cero.
 
-## Estructura
+## Structure / Estructura
 
 ```text
 src/
-├── aria.zig          # punto de entrada y re-exportaciones
-├── types.zig         # tipos y payloads BRC-122
-├── epoch.zig         # ciclo de vida del epoch
-├── record.zig        # creación y hash de AuditRecord
-├── merkle.zig        # árbol y pruebas RFC 6962
-├── opreturn.zig      # serialización y transacciones OP_RETURN
-├── spv.zig           # verificación SPV
-└── zkml_bridge.zig   # integración opcional con zig-zkml
+├── aria.zig          # entry point and re-exports
+├── types.zig         # BRC-122 types and payloads
+├── epoch.zig         # epoch lifecycle
+├── record.zig        # AuditRecord creation and hashing
+├── merkle.zig        # RFC 6962 tree and proofs
+├── opreturn.zig      # OP_RETURN serialization and transactions
+├── spv.zig           # SPV verification
+└── zkml_bridge.zig   # optional zig-zkml integration
 ```
 
-## Seguridad
+## Security / Seguridad
+
+The full threat model, prevented attacks, and protocol limitations are documented in [SECURITY.md](SECURITY.md).
 
 El threat model completo, los ataques prevenidos y las limitaciones del protocolo están documentados en [SECURITY.md](SECURITY.md).
 
+In short, ARIA prevents retroactive commitment fabrication, tampering with sealed records, and epoch replay. It does not prevent an operator from registering false hashes during inference, running a model different from the committed one, or losing local records.
 En resumen, ARIA previene la fabricación retroactiva de compromisos, la alteración de registros sellados y el replay de epochs. No previene que un operador registre hashes falsos durante la inferencia, ejecute un modelo distinto al comprometido o pierda los registros locales.
 
-## Licencia
+## License / Licencia
 
+Refer to the license defined by the main repository and by each Zig dependency.
 Consultar la licencia definida por el repositorio principal y por cada dependencia de Zig.
+
+## Documentation / Documentación
+
+Full documentation is available in [`docs/`](docs/):
+La documentación completa está disponible en [`docs/`](docs/):
+
+### English
+
+- [Introduction](docs/en/README.md)
+- [Architecture](docs/en/ARCHITECTURE.md)
+- [API Reference](docs/en/API.md)
+- [Getting Started](docs/en/GETTING_STARTED.md)
+- [zkML Integration](docs/en/ZKML.md)
+- [Contributing](docs/en/CONTRIBUTING.md)
+
+### Español
+
+- [Introducción](docs/es/README.md)
+- [Arquitectura](docs/es/ARCHITECTURE.md)
+- [Referencia de API](docs/es/API.md)
+- [Guía de Inicio](docs/es/GETTING_STARTED.md)
+- [Integración zkML](docs/es/ZKML.md)
+- [Contribución](docs/es/CONTRIBUTING.md)
