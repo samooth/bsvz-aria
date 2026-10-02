@@ -6,7 +6,7 @@ Documentación completa de `bsvz-aria`, implementación en Zig 0.16+ del estánd
 
 1. [Introducción](README.md)
 2. [Arquitectura](ARCHITECTURE.md)
-3. [API Reference](API.md)
+3. [Referencia de API](API.md)
 4. [Guía de Inicio](GETTING_STARTED.md)
 5. [Integración zkML](ZKML.md)
 6. [Contribución](CONTRIBUTING.md)

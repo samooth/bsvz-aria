@@ -38,6 +38,23 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    const example = b.addExecutable(.{
+        .name = "example_basic",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/basic.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "bsvz_aria", .module = mod },
+            },
+        }),
+    });
+    b.installArtifact(example);
+
+    const run_example = b.addRunArtifact(example);
+    const example_step = b.step("example-basic", "Run the basic example");
+    example_step.dependOn(&run_example.step);
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });

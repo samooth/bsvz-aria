@@ -24,21 +24,21 @@ All tests must pass:
 zig build test
 ```
 
-With zkML enabled:
+The example must run:
 
 ```bash
-zig build test -Dwith_zkml=true
+zig build example-basic
 ```
 
 ### Required tests
 
-- Merkle RFC 6962: 1 leaf, 2 leaves, 4 leaves, 7 leaves (odd).
-- JSON determinism: 100 iterations → same byte-a-byte JSON.
-- Tamper detection: modify `prev_txid` in CLOSE → `PrevTxidMismatch`.
-- Tamper detection: change 1 AuditRecord → Merkle proof failure.
-- Empty epoch: open without records, close with `records_count=0`.
-- SPV round-trip: fake CLOSE verified against fake header.
-- zkML integration: `weightsMerkleRoot` matches EPOCH_OPEN.
+- Merkle RFC 6962: 1 leaf, 2 leaves, 3 leaves (odd, promoted node), empty tree.
+- JSON determinism: shuffled struct field declaration order and object key insertion order produce identical bytes.
+- Tamper detection: modify a record → Merkle root mismatch.
+- Record validation: empty input/output, confidence out of `[0, 1]`.
+- Epoch lifecycle: add to closed epoch fails; close chains `prev_txid`.
+- OP_RETURN round-trip: build and parse `EPOCH_CLOSE` payload.
+- zkML bridge: duplicate commitment rejected; proof for uncommitted model fails.
 
 ## Project structure
 
@@ -48,6 +48,8 @@ bsvz-aria/
 ├── build.zig.zon
 ├── README.md
 ├── SECURITY.md
+├── LICENSE
+├── .github/workflows/ci.yml
 ├── docs/
 │   ├── README.md
 │   ├── es/
@@ -64,23 +66,21 @@ bsvz-aria/
 │       ├── GETTING_STARTED.md
 │       ├── ZKML.md
 │       └── CONTRIBUTING.md
-├── src/
-│   ├── aria.zig
-│   ├── types.zig
-│   ├── epoch.zig
-│   ├── record.zig
-│   ├── merkle.zig
-│   ├── opreturn.zig
-│   ├── spv.zig
-│   ├── verify.zig
-│   ├── zkml_bridge.zig
-│   ├── canonical.zig
-│   ├── root.zig
-│   ├── main.zig
-│   └── examples/
-│       ├── basic.zig
-│       ├── with_zkml.zig
-│       └── verify_spv.zig
+└── src/
+    ├── aria.zig
+    ├── types.zig
+    ├── epoch.zig
+    ├── record.zig
+    ├── merkle.zig
+    ├── opreturn.zig
+    ├── spv.zig
+    ├── verify.zig
+    ├── zkml_bridge.zig
+    ├── canonical.zig
+    ├── root.zig
+    ├── main.zig
+    └── examples/
+        └── basic.zig
 ```
 
 ## Reporting bugs

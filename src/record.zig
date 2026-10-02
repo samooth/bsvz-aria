@@ -21,7 +21,7 @@ pub fn createRecord(
     errdefer allocator.free(record_id);
 
     const model_id = try allocator.dupe(u8, cfg.model_id);
-    errdefer if (model_id.len > 0) allocator.free(model_id);
+    errdefer allocator.free(model_id);
 
     const input_hash = types.hashBytes(cfg.input);
     const output_hash = types.hashBytes(cfg.output);
@@ -44,11 +44,11 @@ pub fn createRecord(
     };
 }
 
-pub fn hashRecord(record: *const types.AuditRecord) ![32]u8 {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+pub fn hashRecord(record: *const types.AuditRecord, allocator: std.mem.Allocator) ![32]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const allocator = arena.allocator();
-    const json = try serializeRecordAlloc(allocator, record);
+    const arena_allocator = arena.allocator();
+    const json = try serializeRecordAlloc(arena_allocator, record);
     return types.hashBytes(json);
 }
 
@@ -63,7 +63,7 @@ fn serializeRecordAlloc(allocator: std.mem.Allocator, record: *const types.Audit
             custom_json = try types.cloneJsonValue(allocator, c);
         }
     }
-    var meta = types.Metadata{
+    const meta = types.Metadata{
         .decision_class = if (record.metadata) |m| m.decision_class else null,
         .custom = custom_json,
     };

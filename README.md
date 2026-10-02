@@ -9,16 +9,16 @@
 
 ## English
 
-`bsvz-aria` is a Zig 0.16+ implementation of the BRC-122 standard (Auditable Real-time Inference Architecture) for the BSV ecosystem. It provides cryptographically verifiable commitment and batch consistency for AI inference pipelines.
+`bsvz-aria` is a Zig 0.16 implementation of the BRC-122 standard (Auditable Real-time Inference Architecture) for the BSV ecosystem. It provides cryptographically verifiable commitment and batch consistency for AI inference pipelines.
 
 ### What ARIA guarantees
 
 - **Temporal commitment:** `model_hashes` and `state_hash` are published before inferences run.
 - **Batch consistency:** all records in an epoch are committed by the `records_merkle_root` published in `EPOCH_CLOSE`.
-- **Epoch linking:** `EPOCH_CLOSE.prev_txid` cryptographically links the close to its opening.
+- **Epoch linking:** `EPOCH_CLOSE.prev_txid` cryptographically links each close to the previous one (or to the genesis hash).
 - **Tamper detection:** any change to a record, epoch identifier, or opening link invalidates verification.
 
-> ARIA alone does **not** prove computational integrity. It does not prove that the committed model was executed or that the result is computationally correct. That guarantee is provided by the optional integration with [`zig-zkml`](https://github.com/samooth/zig-zkml).
+> ARIA alone does **not** prove computational integrity. It does not prove that the committed model was executed or that the result is computationally correct. That guarantee is provided by the integration with [`zig-zkml`](https://github.com/samooth/zig-zkml).
 
 ### Usage flow
 
@@ -28,7 +28,7 @@ EPOCH_OPEN (OP_RETURN)
         │  inferences during the epoch
         ▼
 AuditRecord x N (local storage)
-        |
+        │
         ▼
 EPOCH_CLOSE (OP_RETURN)
 ```
@@ -39,15 +39,14 @@ Transaction payload format:
 OP_FALSE OP_RETURN PUSH4(0x41524941) PUSHDATA(varint_len, json_bytes)
 ```
 
-Where `0x41524941` is the ASCII string `ARIA`. JSON is serialized without whitespace outside strings and with deterministic key ordering.
+Where `0x41524941` is the ASCII string `ARIA`. The JSON is the canonical serialization of `EPOCH_CLOSE`: no whitespace outside strings, deterministic key ordering, hashes as `"sha256:<hex>"`.
 
 ### Installation
 
 Requires Zig 0.16+ and dependencies configured in `build.zig.zon`:
 
 - `bsvz`
-- `zig-wallet-toolbox`
-- `zig-zkml` (optional)
+- `zig-zkml`
 
 ```bash
 zig build
@@ -59,39 +58,32 @@ zig build
 zig build test
 ```
 
-With zkML integration:
-
-```bash
-zig build test -Dwith_zkml=true
-```
-
 ### Minimal example
 
 ```zig
 const std = @import("std");
-const aria = @import("bsvz-aria");
+const bsvz_aria = @import("bsvz-aria");
+const types = bsvz_aria.api.types;
+const aria = bsvz_aria.api.aria;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
-    var model_hashes = std.ArrayList(aria.ModelHash).init(allocator);
-    defer model_hashes.deinit();
+    const genesis = types.hashBytes("genesis");
+    var app = try aria.Aria.init(allocator, .{}, genesis, io);
+    defer app.deinit();
 
-    try model_hashes.append(.{
-        .model_id = "qwen3-next",
-        .sha256 = [_]u8{0} ** 32,
+    const model_hash = types.hashBytes("model-weights");
+    const epoch = try app.openEpoch("ep_1700000000000_0001", "my-inference-service", &[_]types.ModelHash{
+        .{ .model_id = "qwen3-next", .sha256 = model_hash },
     });
+    defer {
+        epoch.deinit();
+        allocator.destroy(epoch);
+    }
 
-    var epoch = try aria.Epoch.open(allocator, .{
-        .system_id = "my-inference-service",
-        .model_hashes = model_hashes.items,
-        .broadcast = false,
-    });
-    defer epoch.deinit();
-
-    try epoch.addRecord(.{
+    _ = try app.addRecord(epoch, .{
         .model_id = "qwen3-next",
         .input = "input bytes",
         .output = "output bytes",
@@ -102,71 +94,48 @@ pub fn main() !void {
         },
     });
 
-    const result = try epoch.close(.{ .broadcast = false });
+    const result = try app.closeEpoch(epoch);
+    try app.verifyEpoch(epoch);
 
-    std.debug.print("records={d}, merkle={any}\n", .{
+    std.debug.print("records={d}, merkle={s}\n", .{
         result.records_count,
-        result.records_merkle_root,
+        types.hashToHex(result.records_merkle_root),
     });
 }
 ```
 
-### zkML Integration
+### zkML integration
 
 `zig-zkml` allows obtaining the model's weights root and attaching computational proofs to records:
 
 ```zig
-const weights_root = try aria.zkml_bridge.weightsMerkleRoot(model);
+const weights_root = types.hashBytes("model-weights");
+try app.zkml.commitModel("qwen3-next", weights_root);
 
-var epoch = try aria.Epoch.open(allocator, .{
-    .system_id = "my-inference-service",
-    .model_hashes = &.{.{
-        .model_id = "qwen3-next",
-        .sha256 = weights_root,
-    }},
-    .broadcast = false,
-});
-
-const zkml_proof = try zig_zkml.prove(.{
-    .model_root = weights_root,
-    .trace = inference_result.trace,
-});
-
-try epoch.addRecord(.{
-    .model_id = "qwen3-next",
-    .input = input,
-    .output = inference_result.output,
-    .metadata = .{
-        .custom = .{ .zkml_proof = .{ .bytes = zkml_proof } },
-    },
+const epoch = try app.openEpoch("ep_1700000000000_0001", "my-inference-service", &[_]types.ModelHash{
+    .{ .model_id = "qwen3-next", .sha256 = weights_root },
 });
 ```
 
-ARIA and zkML are complementary layers: ARIA seals when and under what commitment the batch was performed; zkML proves computational execution.
+ARIA and zkML are complementary layers: ARIA seals when and under what commitment the batch was performed; zkML proves computational execution. See [ZKML.md](docs/en/ZKML.md) — note that `ZkMlBridge.generateProof` currently returns a deterministic commitment placeholder, not a full zero-knowledge proof.
 
 ### Verification
 
 ```zig
-const verified = try aria.verifyEpoch(allocator, epoch_open_txid, .{
-    .header_source = header_source,
-    .tx_fetcher = tx_fetcher,
-});
+const result = try app.closeEpoch(epoch);
+try app.verifyEpoch(epoch);   // recomputes the Merkle root and compares against the commitment
 
-const valid = try aria.verifyRecord(
-    allocator,
-    &verified,
-    &audit_record,
-    merkle_proof,
-);
+const proof = try app.buildRecordProof(epoch, record_id);
+const valid = types.merkle.verifyProof(record_hash, proof, result.records_merkle_root);
 ```
 
 ### Key features
 
 - RFC 6962 Merkle tree with domain separation
 - Canonical JSON serialization for deterministic hashing
-- Pluggable `RecordStore` interface (`MemoryStore`, `SqliteStore`, `FileStore`)
-- SPV verification support
-- Optional zkML integration via `zig-zkml`
+- In-memory epoch and record store (`EpochStore`)
+- SPV proof validation support
+- zkML bridge with model commitments via `zig-zkml`
 
 ### Runtime configuration
 
@@ -176,7 +145,7 @@ const valid = try aria.verifyRecord(
 | Max records per epoch | `1_000_000` |
 | Merkle batch size | `1000` |
 | Fee | `500 sats/kB` |
-| Storage | `sqlite` |
+| Storage | `memory` |
 
 ### Documentation
 
@@ -200,10 +169,10 @@ This project is licensed under the **OPEN BSV License**.
 
 - **Compromiso temporal:** los `model_hashes` y `state_hash` se publican antes de realizar las inferencias.
 - **Consistencia del lote:** todos los registros de un epoch están comprometidos por el `records_merkle_root` publicado en `EPOCH_CLOSE`.
-- **Vinculación de epochs:** `EPOCH_CLOSE.prev_txid` enlaza criptográficamente el cierre con su apertura.
-- **Detección de alteraciones:** un cambio en un registro, identificador del epoch o enlace al opening invalida la verificación.
+- **Vinculación de epochs:** `EPOCH_CLOSE.prev_txid` enlaza criptográficamente cada cierre con el anterior (o con el hash de génesis).
+- **Detección de alteraciones:** un cambio en un registro, identificador del epoch o enlace de apertura invalida la verificación.
 
-> ARIA **no prueba por sí sola la integridad computacional**. No demuestra que se haya ejecutado el modelo comprometido ni que el resultado sea computacionalmente correcto. Esa garantía corresponde a la integración opcional con [`zig-zkml`](https://github.com/samooth/zig-zkml).
+> ARIA **no prueba por sí sola la integridad computacional**. No demuestra que se haya ejecutado el modelo comprometido ni que el resultado sea computacionalmente correcto. Esa garantía corresponde a la integración con [`zig-zkml`](https://github.com/samooth/zig-zkml).
 
 ### Flujo de uso
 
@@ -224,15 +193,14 @@ Formato del payload de transacciones:
 OP_FALSE OP_RETURN PUSH4(0x41524941) PUSHDATA(varint_len, json_bytes)
 ```
 
-Donde `0x41524941` es la cadena ASCII `ARIA`. El JSON se serializa sin whitespace fuera de los strings y con un orden de claves determinístico.
+Donde `0x41524941` es la cadena ASCII `ARIA`. El JSON es la serialización canónica de `EPOCH_CLOSE`: sin whitespace fuera de los strings, orden de claves determinístico, hashes como `"sha256:<hex>"`.
 
 ### Instalación
 
-Se requiere Zig 0.16 o superior y las dependencias configuradas en `build.zig.zon`:
+Se requiere Zig 0.16+ y las dependencias configuradas en `build.zig.zon`:
 
 - `bsvz`
-- `zig-wallet-toolbox`
-- `zig-zkml` (opcional)
+- `zig-zkml`
 
 ```bash
 zig build
@@ -244,39 +212,32 @@ zig build
 zig build test
 ```
 
-Con integración zkML:
-
-```bash
-zig build test -Dwith_zkml=true
-```
-
 ### Ejemplo mínimo
 
 ```zig
 const std = @import("std");
-const aria = @import("bsvz-aria");
+const bsvz_aria = @import("bsvz-aria");
+const types = bsvz_aria.api.types;
+const aria = bsvz_aria.api.aria;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
-    var model_hashes = std.ArrayList(aria.ModelHash).init(allocator);
-    defer model_hashes.deinit();
+    const genesis = types.hashBytes("genesis");
+    var app = try aria.Aria.init(allocator, .{}, genesis, io);
+    defer app.deinit();
 
-    try model_hashes.append(.{
-        .model_id = "qwen3-next",
-        .sha256 = [_]u8{0} ** 32,
+    const model_hash = types.hashBytes("model-weights");
+    const epoch = try app.openEpoch("ep_1700000000000_0001", "my-inference-service", &[_]types.ModelHash{
+        .{ .model_id = "qwen3-next", .sha256 = model_hash },
     });
+    defer {
+        epoch.deinit();
+        allocator.destroy(epoch);
+    }
 
-    var epoch = try aria.Epoch.open(allocator, .{
-        .system_id = "my-inference-service",
-        .model_hashes = model_hashes.items,
-        .broadcast = false,
-    });
-    defer epoch.deinit();
-
-    try epoch.addRecord(.{
+    _ = try app.addRecord(epoch, .{
         .model_id = "qwen3-next",
         .input = "input bytes",
         .output = "output bytes",
@@ -287,11 +248,12 @@ pub fn main() !void {
         },
     });
 
-    const result = try epoch.close(.{ .broadcast = false });
+    const result = try app.closeEpoch(epoch);
+    try app.verifyEpoch(epoch);
 
-    std.debug.print("records={d}, merkle={any}\n", .{
+    std.debug.print("records={d}, merkle={s}\n", .{
         result.records_count,
-        result.records_merkle_root,
+        types.hashToHex(result.records_merkle_root),
     });
 }
 ```
@@ -301,57 +263,33 @@ pub fn main() !void {
 `zig-zkml` permite obtener la raíz de los pesos del modelo y adjuntar pruebas computacionales a los registros:
 
 ```zig
-const weights_root = try aria.zkml_bridge.weightsMerkleRoot(model);
+const weights_root = types.hashBytes("model-weights");
+try app.zkml.commitModel("qwen3-next", weights_root);
 
-var epoch = try aria.Epoch.open(allocator, .{
-    .system_id = "my-inference-service",
-    .model_hashes = &.{.{
-        .model_id = "qwen3-next",
-        .sha256 = weights_root,
-    }},
-    .broadcast = false,
-});
-
-const zkml_proof = try zig_zkml.prove(.{
-    .model_root = weights_root,
-    .trace = inference_result.trace,
-});
-
-try epoch.addRecord(.{
-    .model_id = "qwen3-next",
-    .input = input,
-    .output = inference_result.output,
-    .metadata = .{
-        .custom = .{ .zkml_proof = .{ .bytes = zkml_proof } },
-    },
+const epoch = try app.openEpoch("ep_1700000000000_0001", "my-inference-service", &[_]types.ModelHash{
+    .{ .model_id = "qwen3-next", .sha256 = weights_root },
 });
 ```
 
-ARIA y zkML son capas complementarias: ARIA sella cuándo y bajo qué compromiso se realizó el lote; zkML demuestra la ejecución computacional.
+ARIA y zkML son capas complementarias: ARIA sella cuándo y bajo qué compromiso se realizó el lote; zkML prueba la ejecución computacional. Ver [ZKML.md](docs/es/ZKML.md) — ten en cuenta que `ZkMlBridge.generateProof` actualmente devuelve un marcador de compromiso determinista, no una prueba de conocimiento cero completa.
 
 ### Verificación
 
 ```zig
-const verified = try aria.verifyEpoch(allocator, epoch_open_txid, .{
-    .header_source = header_source,
-    .tx_fetcher = tx_fetcher,
-});
+const result = try app.closeEpoch(epoch);
+try app.verifyEpoch(epoch);   // recalcula la raíz Merkle y la compara con el compromiso
 
-const valid = try aria.verifyRecord(
-    allocator,
-    &verified,
-    &audit_record,
-    merkle_proof,
-);
+const proof = try app.buildRecordProof(epoch, record_id);
+const valid = types.merkle.verifyProof(record_hash, proof, result.records_merkle_root);
 ```
 
 ### Características principales
 
 - Árbol Merkle RFC 6962 con separación de dominio
 - Serialización JSON canónica para hashing determinista
-- Interfaz `RecordStore` intercambiable (`MemoryStore`, `SqliteStore`, `FileStore`)
-- Verificación SPV
-- Integración opcional con zkML via `zig-zkml`
+- Store de epochs y registros en memoria (`EpochStore`)
+- Soporte de validación de pruebas SPV
+- Puente zkML con compromisos de modelo via `zig-zkml`
 
 ### Configuración runtime
 
@@ -361,7 +299,7 @@ const valid = try aria.verifyRecord(
 | Máximo de registros por epoch | `1_000_000` |
 | Tamaño de lote Merkle | `1000` |
 | Fee | `500 sats/kB` |
-| Almacenamiento | `sqlite` |
+| Almacenamiento | `memory` |
 
 ### Documentación
 

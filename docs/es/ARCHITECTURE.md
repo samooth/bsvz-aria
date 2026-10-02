@@ -1,27 +1,26 @@
 # Arquitectura
 
-## Visión general
+## Resumen
 
-`bsvz-aria` implementa BRC-122 como una librería Zig 0.16+ que permite registrar de forma auditable el ciclo de vida de inferencias de IA mediante dos compromisos on-chain: `EPOCH_OPEN` y `EPOCH_CLOSE`. Los `AuditRecord` individuales se almacenan localmente y no se publican uno por uno en la cadena.
+`bsvz-aria` implementa BRC-122 como una librería Zig 0.16 que permite registro auditable del ciclo de vida de inferencia de IA mediante dos compromisos on-chain: `EPOCH_OPEN` y `EPOCH_CLOSE`. Los `AuditRecord` individuales se almacenan localmente y no se publican uno por uno en la cadena.
 
 ## Capas
 
 ```
 ┌─────────────────────────────────────────┐
-│  Aplicación (main / examples / CLI)     │
+│  Aplicación (main / ejemplos / CLI)     │
 ├─────────────────────────────────────────┤
-│  aria.zig (Aria struct + re-exports)    │
+│  aria.zig (struct Aria: ciclo de vida)  │
 ├─────────────────────────────────────────┤
-│  epoch.zig, record.zig, opreturn.zig   │
-│  merkle.zig, spv.zig, verify.zig       │
+│  epoch.zig, record.zig, opreturn.zig    │
+│  merkle.zig, spv.zig, verify.zig        │
+│  zkml_bridge.zig                        │
 ├─────────────────────────────────────────┤
 │  types.zig (modelos de datos + errores) │
-├─────────────────────────────────────────┤
 │  canonical.zig (JSON determinista)      │
 ├─────────────────────────────────────────┤
-│  bsvz (transacciones, crypto, SPV)      │
-│  zig-wallet-toolbox (broadcast opcional)│
-│  zig-zkml (integración opcional)        │
+│  bsvz (transacciones, cripto, SPV)      │
+│  zig-zkml (pruebas computacionales)     │
 └─────────────────────────────────────────┘
 ```
 
@@ -32,38 +31,40 @@ EPOCH_OPEN (OP_RETURN)
         │
         │  inferencias durante el epoch
         ▼
-AuditRecord x N (almacenamiento local)
+AuditRecord x N (almacenamiento local, árbol Merkle)
         │
         ▼
-EPOCH_CLOSE (OP_RETURN)
+EPOCH_CLOSE (OP_RETURN, prev_txid enlaza al cierre anterior)
 ```
 
-1. **EPOCH_OPEN**: se comprometen los `model_hashes` y el `state_hash` on-chain.
-2. **AuditRecords**: se crean localmente por cada inferencia; cada uno se hashea y se agrega al árbol Merkle.
-3. **EPOCH_CLOSE**: se publica el `records_merkle_root` y el `prev_txid` enlaza con el `EPOCH_OPEN`.
+1. **EPOCH_OPEN**: `model_hashes` y `state_hash` se comprometen antes de ejecutar las inferencias; `timestamp` y un `nonce` aleatorio se rellenan.
+2. **AuditRecords**: creados localmente por cada inferencia; cada uno se serializa canónicamente, se hashea y se añade al árbol Merkle con número de secuencia.
+3. **EPOCH_CLOSE**: se publica `records_merkle_root`; `prev_txid` encadena con el cierre anterior (o el hash de génesis), proporcionando vinculación de epochs.
 
 ## Módulos
 
 | Módulo | Responsabilidad |
 |--------|-----------------|
-| `types.zig` | Tipos de datos, error sets, helpers de hash, canonical JSON clone/deinit |
-| `epoch.zig` | Ciclo de vida del epoch: `createEpoch`, `addRecordToEpoch`, `closeEpoch`, `validateClose`, `buildEpochProof` |
-| `record.zig` | Creación y serialización de `AuditRecord` |
-| `merkle.zig` | Árbol Merkle RFC 6962: `addLeaf`, `root`, `proof`, `verifyProof` |
-| `opreturn.zig` | Serialización y parsing de payloads OP_RETURN |
-| `spv.zig` | Verificación SPV del CLOSE contra headers |
-| `verify.zig` | Verificación de apertura, cierre y pertenencia de records |
-| `zkml_bridge.zig` | Integración opcional con `zig-zkml` |
-| `canonical.zig` | Serializador JSON determinista |
+| `types.zig` | Tipos de datos, conjuntos de errores, ayudas de hash, clone/deinit de JSON |
+| `epoch.zig` | Ciclo de vida del epoch: `createEpoch`, `addRecordToEpoch`, `closeEpoch`, `validateClose`, `buildEpochProof`, índice `EpochStore` |
+| `record.zig` | Creación, hash y serialización canónica de `AuditRecord` |
+| `merkle.zig` | Árbol Merkle RFC 6962 con separación de dominio: `addLeaf`, `root`, `proof`, `verifyProof` |
+| `opreturn.zig` | Payload OP_RETURN BRC-122 (mágica + varint + JSON canónico de `EPOCH_CLOSE`) |
+| `spv.zig` | Estado del cliente SPV y validación de pruebas |
+| `verify.zig` | Verificación de apertura, cierre, pertenencia de registros y raíces Merkle |
+| `zkml_bridge.zig` | Compromisos de modelo y marcadores de prueba deterministas para `zig-zkml` |
+| `canonical.zig` | Serializador JSON determinista (claves ordenadas, sin whitespace) |
+| `aria.zig` | Fachada `Aria`: coordina el ciclo de vida, el store, el estado SPV y el puente zkML |
 
-## Estrategia de ownership
+## Estrategia de propiedad
 
-- Los structs que contienen `ArrayList` o `StringHashMap` exponen `deinit(allocator)` para liberar memoria.
-- `createEpoch` allocatea con `allocator.create`; el caller debe liberar con `allocator.destroy(epoch)` tras `epoch.deinit()`.
-- `addRecordToEpoch` devuelve el `AuditRecord` por valor; el ownership lo retiene `epoch.records`.
-- Los strings duplicados (ej. `record_id`, `epoch_id`, `model_id`) se liberan en `deinit`.
+- El **llamador** es dueño de cada epoch: `createEpoch`/`openEpoch` devuelven `*Epoch`; el llamador debe invocar `epoch.deinit()` y luego `allocator.destroy(epoch)`.
+- `EpochStore` es un índice de consulta: nunca libera epochs ni registros, solo sus propias claves de mapa.
+- `Aria.addRecord` devuelve un `*AuditRecord` prestado, propiedad de `epoch.records`; válido hasta la siguiente mutación del epoch.
+- `EPOCH_OPEN.system_id` se toma prestado del llamador; `EPOCH_CLOSE.epoch_id` y los campos string de `AuditRecord` son propios y se liberan en `deinit`.
+- Los structs que contienen `ArrayList` o `StringHashMap` exponen `deinit(allocator)`.
 
-## Configuración runtime
+## Configuración en tiempo de ejecución
 
 ```zig
 const Config = struct {
@@ -77,19 +78,15 @@ const Config = struct {
 
 Todos los valores se validan antes de iniciar un epoch mediante `Config.validate()`.
 
-## Storage
+## Almacenamiento
 
-`RecordStore` es una interfaz pluggable para almacenar `AuditRecord`:
-
-- `MemoryStore`: implementación en memoria para tests.
-- `SqliteStore`: almacenamiento persistente en SQLite para producción.
-- `FileStore`: JSON Lines para integraciones simples.
+`Config.StoreType` declara el almacenamiento previsto (`memory`, `sqlite`, `file`). La implementación en memoria la proporcionan `EpochStore` más la lista de registros por epoch; `sqlite` y `file` están reservados para trabajo futuro.
 
 ## Serialización
 
-- **JSON canónico**: orden de claves determinístico, sin whitespace fuera de strings, números sin ceros finales innecesarios, escaping RFC 8259.
-- **OP_RETURN**: `OP_FALSE OP_RETURN PUSH4(0x41524941) PUSHDATA(<json_bytes>)`.
+- **JSON canónico**: claves de struct y objeto ordenadas lexicográficamente, sin whitespace fuera de strings, escaping RFC 8259, hashes como `"sha256:<hex>"`, floats no finitos rechazados.
+- **OP_RETURN**: `OP_FALSE OP_RETURN PUSH4(0x41524941) PUSHDATA(varint_len, json_bytes)` donde el JSON es la serialización canónica de `EPOCH_CLOSE`.
 
 ## Seguridad
 
-Ver [SECURITY.md](../SECURITY.md) para el threat model completo.
+Ver [SECURITY.md](../SECURITY.md) para el modelo de amenazas completo.

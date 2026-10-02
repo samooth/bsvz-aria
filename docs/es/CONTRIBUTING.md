@@ -24,21 +24,21 @@ Todos los tests deben pasar:
 zig build test
 ```
 
-Con zkML habilitado:
+El ejemplo debe ejecutarse:
 
 ```bash
-zig build test -Dwith_zkml=true
+zig build example-basic
 ```
 
 ### Tests obligatorios
 
-- Merkle RFC 6962: 1 hoja, 2 hojas, 4 hojas, 7 hojas (impar).
-- JSON determinismo: 100 iteraciones → mismo JSON byte-a-byte.
-- Tamper detection: modificar `prev_txid` en CLOSE → `PrevTxidMismatch`.
-- Tamper detection: cambiar 1 AuditRecord → falla Merkle proof.
-- Empty epoch: open sin records, close con `records_count=0`.
-- SPV round-trip: CLOSE fake verificado contra header fake.
-- zkML integration: `weightsMerkleRoot` coincide con EPOCH_OPEN.
+- Merkle RFC 6962: 1 hoja, 2 hojas, 3 hojas (impar, nodo promovido), árbol vacío.
+- JSON determinismo: orden de declaración de campos y orden de inserción de claves de objeto producen bytes idénticos.
+- Tamper detection: modificar un registro → fallo de raíz Merkle.
+- Validación de registro: input/output vacíos, confidence fuera de `[0, 1]`.
+- Ciclo de vida: añadir a un epoch cerrado falla; close encadena `prev_txid`.
+- OP_RETURN round-trip: construir y analizar payload de `EPOCH_CLOSE`.
+- Puente zkML: compromiso duplicado rechazado; prueba para modelo no comprometido falla.
 
 ## Estructura del proyecto
 
@@ -48,30 +48,39 @@ bsvz-aria/
 ├── build.zig.zon
 ├── README.md
 ├── SECURITY.md
+├── LICENSE
+├── .github/workflows/ci.yml
 ├── docs/
 │   ├── README.md
-│   ├── ARCHITECTURE.md
-│   ├── API.md
-│   ├── GETTING_STARTED.md
-│   ├── ZKML.md
-│   └── CONTRIBUTING.md
-├── src/
-│   ├── aria.zig
-│   ├── types.zig
-│   ├── epoch.zig
-│   ├── record.zig
-│   ├── merkle.zig
-│   ├── opreturn.zig
-│   ├── spv.zig
-│   ├── verify.zig
-│   ├── zkml_bridge.zig
-│   ├── canonical.zig
-│   ├── root.zig
-│   ├── main.zig
-│   └── examples/
-│       ├── basic.zig
-│       ├── with_zkml.zig
-│       └── verify_spv.zig
+│   ├── es/
+│   │   ├── README.md
+│   │   ├── ARCHITECTURE.md
+│   │   ├── API.md
+│   │   ├── GETTING_STARTED.md
+│   │   ├── ZKML.md
+│   │   └── CONTRIBUTING.md
+│   └── en/
+│       ├── README.md
+│       ├── ARCHITECTURE.md
+│       ├── API.md
+│       ├── GETTING_STARTED.md
+│       ├── ZKML.md
+│       └── CONTRIBUTING.md
+└── src/
+    ├── aria.zig
+    ├── types.zig
+    ├── epoch.zig
+    ├── record.zig
+    ├── merkle.zig
+    ├── opreturn.zig
+    ├── spv.zig
+    ├── verify.zig
+    ├── zkml_bridge.zig
+    ├── canonical.zig
+    ├── root.zig
+    ├── main.zig
+    └── examples/
+        └── basic.zig
 ```
 
 ## Reportar bugs

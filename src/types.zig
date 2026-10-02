@@ -145,17 +145,6 @@ pub const Config = struct {
     }
 };
 
-pub const OpenConfig = struct {
-    system_id: []const u8,
-    model_hashes: []const ModelHash,
-    state_hash: ?Hash = null,
-    wallet: ?*std.Build.Module = null,
-    broadcast: bool = true,
-    nonce: ?Hash = null,
-    timestamp_ms: ?u64 = null,
-    sequence: ?u16 = null,
-};
-
 pub const RecordConfig = struct {
     model_id: []const u8,
     input: []const u8,
@@ -163,11 +152,6 @@ pub const RecordConfig = struct {
     confidence: f64 = 0.0,
     latency_ms: u32 = 0,
     metadata: ?Metadata = null,
-};
-
-pub const CloseConfig = struct {
-    wallet: ?*std.Build.Module = null,
-    broadcast: bool = true,
 };
 
 pub const CloseResult = struct {
@@ -190,6 +174,10 @@ pub const EpochError = error{
     SequenceOverflow,
     EmptyInput,
     EmptyOutput,
+    EpochNotClosed,
+    RootMismatch,
+    CountMismatch,
+    RecordNotFound,
 };
 
 pub const RecordError = error{
@@ -210,6 +198,7 @@ pub const VerifyError = error{
     SpvVerificationFailed,
     JsonParseFailed,
     AriaPayloadNotFound,
+    SequenceMismatch,
 };
 
 pub const MerkleError = error{
@@ -234,7 +223,7 @@ fn deinitJsonValue(allocator: std.mem.Allocator, value: std.json.Value) void {
                 allocator.free(entry.key_ptr.*);
                 deinitJsonValue(allocator, entry.value_ptr.*);
             }
-            mutable_obj.deinit();
+            mutable_obj.deinit(allocator);
         },
         .array => |arr| {
             var mutable_arr = arr;
@@ -268,12 +257,12 @@ pub fn cloneJsonValue(allocator: std.mem.Allocator, value: std.json.Value) !std.
             return .{ .array = new_arr };
         },
         .object => |obj| {
-            var new_obj = std.json.ObjectMap.init(allocator);
+            var new_obj = std.json.ObjectMap.empty;
             var it = obj.iterator();
             while (it.next()) |entry| {
                 const key = try allocator.dupe(u8, entry.key_ptr.*);
                 const val = try cloneJsonValue(allocator, entry.value_ptr.*);
-                try new_obj.put(key, val);
+                try new_obj.put(allocator, key, val);
             }
             return .{ .object = new_obj };
         },
@@ -303,40 +292,42 @@ pub fn parseHashPrefixed(s: []const u8) !Hash {
         const hex_part = s["sha256:".len..];
         if (hex_part.len != 64) return error.InvalidHash;
         var out: [32]u8 = undefined;
-        try std.fmt.hexToBytes(&out, hex_part);
+        _ = try std.fmt.hexToBytes(&out, hex_part);
         return out;
     }
     if (s.len == 64) {
         var out: [32]u8 = undefined;
-        try std.fmt.hexToBytes(&out, s);
+        _ = try std.fmt.hexToBytes(&out, s);
         return out;
     }
     return error.InvalidHash;
 }
 
-pub fn computeStateHash(model_hashes: []const ModelHash) Hash {
-    var sorted = try std.ArrayList(ModelHash).initCapacity(std.heap.page_allocator, model_hashes.len);
-    defer sorted.deinit(std.heap.page_allocator);
-    try sorted.appendSlice(std.heap.page_allocator, model_hashes);
-    std.sort.sort(ModelHash, sorted.items, {}, struct {
+pub fn computeStateHash(allocator: std.mem.Allocator, model_hashes: []const ModelHash) !Hash {
+    var sorted = try std.ArrayList(ModelHash).initCapacity(allocator, model_hashes.len);
+    defer sorted.deinit(allocator);
+    try sorted.appendSlice(allocator, model_hashes);
+    std.mem.sort(ModelHash, sorted.items, {}, struct {
         fn lessThan(_: void, a: ModelHash, b: ModelHash) bool {
             return std.mem.lessThan(u8, a.model_id, b.model_id);
         }
     }.lessThan);
 
-    var buf = std.ArrayList(u8).init(std.heap.page_allocator);
-    defer buf.deinit(std.heap.page_allocator);
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(allocator);
     for (sorted.items) |mh| {
-        try buf.appendSlice(std.heap.page_allocator, mh.model_id);
-        try buf.appendSlice(std.heap.page_allocator, &mh.sha256);
+        try buf.appendSlice(allocator, mh.model_id);
+        try buf.appendSlice(allocator, &mh.sha256);
     }
     return hashBytes(buf.items);
 }
 
 pub const MerkleProofNode = struct {
     hash: Hash,
-    position: enum { left, right },
+    position: MerkleProofNodePosition,
 };
+
+pub const MerkleProofNodePosition = enum { left, right };
 
 pub const MerkleProof = struct {
     leaf_index: usize,
@@ -351,7 +342,6 @@ pub const MerkleProof = struct {
 pub const MerkleTree = struct {
     allocator: std.mem.Allocator,
     leaves: std.ArrayList(Hash),
-    cached_root: ?Hash = null,
 
     pub fn init(allocator: std.mem.Allocator) MerkleTree {
         return .{
@@ -365,7 +355,6 @@ pub const MerkleTree = struct {
         self.* = .{
             .allocator = undefined,
             .leaves = std.ArrayList(Hash).empty,
-            .cached_root = null,
         };
     }
 };

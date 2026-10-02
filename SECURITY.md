@@ -14,7 +14,7 @@ Please report security vulnerabilities by email to the maintainers. Do not open 
 
 - All audit records are hashed with SHA-256 before inclusion in the Merkle tree.
 - Epoch roots are computed over the canonical JSON serialization of all records.
-- Merkle proofs are RFC 6962 compliant with leaf duplication for odd nodes.
+- Merkle proofs are RFC 6962 compliant: domain-separated leaf (`0x00`) and internal (`0x01`) hashes, with odd nodes promoted.
 
 ## Cryptographic Assumptions
 
@@ -25,5 +25,10 @@ Please report security vulnerabilities by email to the maintainers. Do not open 
 ## Dependencies
 
 - `bsvz`: Bitcoin SV transaction library
-- `zig-wallet-toolbox`: Wallet and signing utilities (optional)
-- `zig-zkml`: Zero-knowledge ML proofs (optional, enabled with `-Dwith_zkml`)
+- `zig-zkml`: Zero-knowledge ML proofs
+
+## Known Limitations
+
+- `spv.verifySpvProof` performs structural validation only (non-empty proof, multiple of 32 bytes). Full header-chain verification against `bsvz` primitives is a follow-up; do not rely on it for consensus-critical verification yet.
+- `zkml_bridge.generateProof` returns a deterministic commitment placeholder, not a zero-knowledge proof.
+- On-chain broadcast of `EPOCH_OPEN`/`EPOCH_CLOSE` transactions is not implemented; payloads are built locally via `opreturn.buildOpReturnPayload`.
